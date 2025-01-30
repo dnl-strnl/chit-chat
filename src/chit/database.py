@@ -3,7 +3,7 @@ import sqlite3
 import json
 
 class Database:
-    def __init__(self, db_path="data/chat.db"):
+    def __init__(self, db_path):
         self.db_path = db_path
         self.init_db()
 

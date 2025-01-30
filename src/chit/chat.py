@@ -1,10 +1,10 @@
 from flask import jsonify, Flask, render_template, request, Response, stream_with_context
 from flask_cors import CORS
 import json
-import os
 from langchain_community.llms import Ollama
+import os
 
-from .database import Database
+from chit.database import Database
 
 
 app = Flask(__name__)
@@ -12,7 +12,7 @@ CORS(app)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:14b")
-db = Database()
+db = Database("./data/chat.db")
 lm = Ollama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 
 @app.route('/')
