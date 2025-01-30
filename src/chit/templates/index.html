@@ -1,0 +1,622 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --input-bg: #2d2d2d;
+            --border-color: #404040;
+            --hover-color: #3d3d3d;
+            --sidebar-width: 260px;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            min-height: 100vh;
+        }
+
+        #sidebar {
+            width: var(--sidebar-width);
+            background-color: #202123;
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+        }
+
+        #new-chat-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #new-chat-btn:hover {
+            background-color: #45a049;
+        }
+
+        #chat-list {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .chat-item {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chat-item:hover {
+            background-color: var(--hover-color);
+        }
+
+        .chat-item.active {
+            background-color: var(--hover-color);
+        }
+
+        .chat-icon {
+            font-size: 1.2em;
+        }
+
+        #main-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #chat-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        #messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background-color: var(--input-bg);
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-size: 16px;
+        }
+
+        .user-message {
+            background-color: #2b5278;
+            margin-left: 20px;
+        }
+
+        .assistant-message {
+            background-color: #3d3d3d;
+            margin-right: 20px;
+        }
+
+        #input-container {
+            display: flex;
+            gap: 10px;
+            padding: 20px;
+        }
+
+        #message-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            background-color: var(--input-bg);
+            color: var(--text-color);
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #model-selector {
+            padding: 10px;
+            background-color: var(--input-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+      .delete-btn {
+           background: none;
+           border: none;
+           color: #999;
+           cursor: pointer;
+           padding: 5px;
+           margin-left: auto;
+           opacity: 0;
+           transition: opacity 0.3s;
+       }
+
+       .chat-item:hover .delete-btn {
+           opacity: 1;
+       }
+
+       .delete-btn:hover {
+           color: #ff4444;
+       }
+
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <button id="new-chat-btn">+ New Chat</button>
+        <div id="chat-list"></div>
+    </div>
+
+    <div id="main-content">
+        <div id="chat-container">
+            <select id="model-selector">
+                <option value="deepseek-r1:14b">DeepSeek R1 14B</option>
+            </select>
+            <div id="messages"></div>
+            <div id="input-container">
+                <input type="text" id="message-input" placeholder="Type your message...">
+                <button onclick="sendMessage()" id="send-button">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        const sessions = new Map();
+
+        class ChatSession {
+            constructor(id, title, model = 'deepseek-r1:14b') {
+                this.id = id;
+                this.title = title;
+                this.model = model;
+                this.messages = [];
+                this.currentResponse = null;
+                this.isGenerating = false;
+                this.messageQueue = [];
+                this.processingQueue = false;
+                this.currentResponseDiv = null;
+            }
+
+            static async fromDatabase(sessionData) {
+                const session = new ChatSession(
+                    sessionData.session_id,
+                    sessionData.title,
+                    sessionData.model
+                );
+                if (sessionData.messages) {
+                    session.messages = sessionData.messages.map(msg => ({
+                        role: msg.role,
+                        content: msg.content
+                    }));
+                }
+                return session;
+            }
+
+            addMessage(role, content) {
+                this.messages.push({ role, content });
+                if (this.messages.length === 1 && role === 'user') {
+                    this.title = content.slice(0, 30) + (content.length > 30 ? '...' : '');
+                    updateChatList();
+                }
+            }
+
+            updateCurrentResponse(content) {
+                this.currentResponse = content;
+                if (this.currentResponseDiv) {
+                    this.currentResponseDiv.textContent = content;
+                }
+            }
+
+            async processQueue() {
+                if (this.processingQueue || this.messageQueue.length === 0) return;
+
+                this.processingQueue = true;
+
+                while (this.messageQueue.length > 0) {
+                    const message = this.messageQueue.shift();
+                    await this.processMessage(message);
+                }
+
+                this.processingQueue = false;
+            }
+
+            async processMessage(message) {
+                this.isGenerating = true;
+                this.addMessage('user', message);
+
+                // Only append to UI if this is the current session.
+                if (this.id === currentSessionId) {
+                    appendMessage('user', message);
+                }
+
+                // Create and store the response div in the session.
+                const responseDiv = document.createElement('div');
+                responseDiv.className = 'message assistant-message';
+                this.currentResponseDiv = responseDiv;
+
+                if (this.id === currentSessionId) {
+                    messagesContainer.appendChild(responseDiv);
+                }
+
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message: message,
+                            model: modelSelector.value,
+                            session_id: this.id
+                        }),
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let responseText = '';
+
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+
+                            try {
+                                const data = JSON.parse(line);
+                                if (!data.done) {
+                                    responseText += data.content;
+                                    this.updateCurrentResponse(responseText);
+                                    if (this.id === currentSessionId) {
+                                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                                    }
+                                } else {
+                                    this.isGenerating = false;
+                                    this.currentResponse = null;
+                                    this.currentResponseDiv = null;
+                                    this.addMessage('assistant', responseText);
+                                }
+                            } catch (e) {
+                                console.error('Error parsing JSON:', e);
+                            }
+                        }
+                    }
+
+                    updateChatList();
+
+                } catch (error) {
+                    if (this.id === currentSessionId) {
+                        responseDiv.textContent = 'Error: Could not connect to the server';
+                    }
+                    console.error('Error:', error);
+                    this.isGenerating = false;
+                    this.currentResponseDiv = null;
+                }
+            }
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || !currentSessionId) return;
+
+            const session = sessions.get(currentSessionId);
+            session.messageQueue.push(message);
+            messageInput.value = '';
+
+            // Only disable input if we're in the current session.
+            if (session.isGenerating) {
+                messageInput.disabled = true;
+                sendButton.disabled = true;
+            }
+
+            session.processQueue().finally(() => {
+                if (currentSessionId === session.id) {
+                    messageInput.disabled = false;
+                    sendButton.disabled = false;
+                    messageInput.focus();
+                }
+            });
+        }
+
+        // Update the switchToSession function.
+        function switchToSession(sessionId) {
+            if (currentSessionId) {
+                const oldSession = sessions.get(currentSessionId);
+                if (oldSession) {
+                    const inputDisabled = oldSession.isGenerating;
+                    messageInput.disabled = inputDisabled;
+                    sendButton.disabled = inputDisabled;
+                }
+            }
+
+            currentSessionId = sessionId;
+            const messagesContainer = document.getElementById('messages');
+            messagesContainer.innerHTML = '';
+
+            const session = sessions.get(sessionId);
+            if (session) {
+                // Show all completed messages.
+                session.messages.forEach(msg => {
+                    appendMessage(msg.role, msg.content);
+                });
+
+                // If there's an ongoing response, reconnect the response div.
+                if (session.isGenerating && session.currentResponse) {
+                    if (session.currentResponseDiv) {
+                        messagesContainer.appendChild(session.currentResponseDiv);
+                    } else {
+                        // Fallback if somehow the div was lost.
+                        appendMessage('assistant', session.currentResponse);
+                    }
+                }
+
+                messageInput.disabled = session.isGenerating;
+                sendButton.disabled = session.isGenerating;
+            }
+
+            updateChatList();
+        }
+
+        async function loadSessions() {
+            try {
+                const response = await fetch('/sessions');
+                const sessionData = await response.json();
+
+                sessions.clear();
+                for (const data of sessionData) {
+                    // Fetch full session data including messages.
+                    const fullSessionResponse = await fetch(`/sessions/${data.session_id}`);
+                    const fullSessionData = await fullSessionResponse.json();
+
+                    const session = await ChatSession.fromDatabase(fullSessionData);
+                    sessions.set(session.id, session);
+                }
+
+                if (sessionData.length > 0) {
+                    await switchToSession(sessionData[0].session_id);
+                } else {
+                    await createNewChat();
+                }
+
+                updateChatList();
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        async function createNewChat() {
+            const sessionId = 'session_' + Date.now();
+            try {
+                const response = await fetch('/sessions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        title: 'New Chat',
+                        model: modelSelector.value
+                    }),
+                });
+
+                const sessionData = await response.json();
+                const session = await ChatSession.fromDatabase(sessionData);
+                sessions.set(sessionId, session);
+                switchToSession(sessionId);
+                updateChatList();
+            } catch (error) {
+                console.error('Error creating new chat:', error);
+            }
+        }
+
+        async function deleteSession(sessionId) {
+            try {
+                await fetch(`/sessions/${sessionId}`, {
+                    method: 'DELETE'
+                });
+                sessions.delete(sessionId);
+
+                if (currentSessionId === sessionId) {
+                    const nextSession = sessions.values().next().value;
+                    if (nextSession) {
+                        switchToSession(nextSession.id);
+                    } else {
+                        createNewChat();
+                    }
+                }
+
+                updateChatList();
+            } catch (error) {
+                console.error('Error deleting session:', error);
+            }
+        }
+
+        function updateChatList() {
+            const chatList = document.getElementById('chat-list');
+            chatList.innerHTML = '';
+
+            sessions.forEach((session, id) => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'chat-item' + (id === currentSessionId ? ' active' : '');
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.innerHTML = '🗑️';
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteSession(id);
+                };
+
+                chatItem.innerHTML = `
+                    <span class="chat-icon">💭</span>
+                    <span class="chat-title">${session.title}</span>
+                `;
+                chatItem.appendChild(deleteBtn);
+                chatItem.onclick = () => switchToSession(id);
+                chatList.appendChild(chatItem);
+            });
+        }
+
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const modelSelector = document.getElementById('model-selector');
+
+        document.getElementById('new-chat-btn').onclick = createNewChat;
+        document.addEventListener('DOMContentLoaded', loadSessions);
+
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        const newStyles = `
+            .code-block {
+                position: relative;
+                background: #282c34;
+                border-radius: 6px;
+                padding: 1rem;
+                margin: 1rem 0;
+                font-family: 'Consolas', 'Monaco', monospace;
+            }
+
+            .code-block pre {
+                margin: 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+
+            .copy-button {
+                position: absolute;
+                top: 0.5rem;
+                right: 0.5rem;
+                padding: 0.25rem 0.5rem;
+                background: #4a4a4a;
+                border: none;
+                border-radius: 4px;
+                color: #fff;
+                font-size: 0.8rem;
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+
+            .copy-button:hover {
+                background: #666;
+            }
+
+            .language-label {
+                position: absolute;
+                top: 0.5rem;
+                left: 0.5rem;
+                color: #888;
+                font-size: 0.8rem;
+                user-select: none;
+            }
+        `;
+
+        const styleSheet = document.createElement("style");
+        styleSheet.textContent = newStyles;
+        document.head.appendChild(styleSheet);
+
+        // Format code blocks.
+        function formatCodeBlocks(content) {
+            // Match code blocks with optional language specification.
+            const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+
+            // Replace each code block with formatted HTML.
+            return content.replace(codeBlockRegex, (match, language, code) => {
+                const uniqueId = 'code-' + Math.random().toString(36).substr(2,9);
+                return `
+                    <div class="code-block">
+                        ${language ? `<span class="language-label">${language}</span>` : ''}
+                        <pre id="${uniqueId}">${code.trim()}</pre>
+                        <button class="copy-button" onclick="copyCode('${uniqueId}')">Copy</button>
+                    </div>
+                `;
+            });
+        }
+
+        function copyCode(codeId) {
+            const codeElement = document.getElementById(codeId);
+            const text = codeElement.textContent;
+
+            navigator.clipboard.writeText(text).then(() => {
+                const button = codeElement.parentElement.querySelector('.copy-button');
+                const originalText = button.textContent;
+
+                button.textContent = 'Copied!';
+                button.style.background = '#4CAF50';
+
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '#4a4a4a';
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy text:', err);
+            });
+        }
+
+        window.copyCode = copyCode;
+
+        function appendMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+
+            // Check if the content contains code blocks.
+            if (content.includes('```')) {
+                messageDiv.innerHTML = formatCodeBlocks(content);
+            } else {
+                messageDiv.textContent = content;
+            }
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Create initial chat session.
+        // createNewChat();
+    </script>
+</body>
+</html>
